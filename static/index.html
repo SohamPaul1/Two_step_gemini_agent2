@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gemini Voice Agent</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #22263a;
+      --accent: #4f8ef7;
+      --accent-glow: rgba(79,142,247,.35);
+      --danger: #e05555;
+      --text: #e8eaf0;
+      --muted: #7a7f99;
+      --radius: 14px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem 3rem;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: .03em;
+      margin-bottom: .35rem;
+    }
+    h1 span { color: var(--accent); }
+
+    .subtitle {
+      font-size: .85rem;
+      color: var(--muted);
+      margin-bottom: 2.5rem;
+    }
+
+    /* Status bar */
+    #status-bar {
+      width: 100%;
+      max-width: 640px;
+      background: var(--surface);
+      border: 1px solid var(--surface2);
+      border-radius: var(--radius);
+      padding: .65rem 1.1rem;
+      font-size: .82rem;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: .6rem;
+      margin-bottom: 1.5rem;
+      min-height: 2.6rem;
+    }
+    #status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--muted);
+      flex-shrink: 0;
+      transition: background .3s;
+    }
+    #status-dot.active  { background: #3ddb6a; box-shadow: 0 0 6px #3ddb6a; }
+    #status-dot.busy    { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+    #status-dot.error   { background: var(--danger); }
+    #status-dot.listen  { background: #ffd166; box-shadow: 0 0 6px #ffd166; animation: pulse 1s ease infinite; }
+
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+    /* Transcript / response cards */
+    .conversation {
+      width: 100%;
+      max-width: 640px;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      margin-bottom: 2.5rem;
+      flex: 1;
+      overflow-y: auto;
+      max-height: 40vh;
+      padding-right: 4px;
+    }
+    .conversation::-webkit-scrollbar { width: 4px; }
+    .conversation::-webkit-scrollbar-thumb { background: var(--surface2); border-radius: 4px; }
+
+    .bubble {
+      padding: .8rem 1.1rem;
+      border-radius: var(--radius);
+      font-size: .9rem;
+      line-height: 1.55;
+      max-width: 90%;
+    }
+    .bubble.user {
+      background: var(--surface2);
+      align-self: flex-end;
+      color: var(--text);
+      border-bottom-right-radius: 4px;
+    }
+    .bubble.agent {
+      background: linear-gradient(135deg, #1e2a4a, var(--surface2));
+      border: 1px solid #2a3560;
+      align-self: flex-start;
+      border-bottom-left-radius: 4px;
+    }
+    .bubble .label {
+      font-size: .7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--muted);
+      margin-bottom: .3rem;
+    }
+    .bubble.user .label { color: #8fa3cc; }
+    .bubble.agent .label { color: #6685cc; }
+
+    /* VAD visualizer */
+    .vad-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1.2rem;
+      margin-bottom: 2rem;
+    }
+
+    #vad-canvas {
+      width: 280px; height: 56px;
+      background: var(--surface);
+      border-radius: 10px;
+      display: block;
+    }
+
+    /* Mic button */
+    #mic-btn {
+      width: 84px; height: 84px;
+      border-radius: 50%;
+      border: none;
+      cursor: pointer;
+      background: var(--surface);
+      box-shadow: 0 0 0 3px var(--surface2), 0 4px 24px rgba(0,0,0,.5);
+      display: flex; align-items: center; justify-content: center;
+      transition: background .2s, box-shadow .2s, transform .1s;
+      position: relative;
+    }
+    #mic-btn:hover { background: #1f233a; transform: scale(1.04); }
+    #mic-btn.active {
+      background: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow), 0 0 28px var(--accent-glow);
+      animation: mic-pulse 1.4s ease infinite;
+    }
+    @keyframes mic-pulse {
+      0%,100% { box-shadow: 0 0 0 3px var(--accent-glow), 0 0 28px var(--accent-glow); }
+      50%      { box-shadow: 0 0 0 8px transparent,        0 0 40px var(--accent-glow); }
+    }
+    #mic-btn.speaking {
+      background: var(--danger);
+      box-shadow: 0 0 0 3px rgba(224,85,85,.35), 0 0 28px rgba(224,85,85,.35);
+      animation: none;
+    }
+    #mic-btn svg { pointer-events: none; }
+
+    #btn-label {
+      font-size: .78rem;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    /* Footer */
+    footer {
+      margin-top: auto;
+      padding-top: 2rem;
+      font-size: .75rem;
+      color: var(--muted);
+      text-align: center;
+    }
+    footer a { color: var(--accent); text-decoration: none; }
+
+    /* Error toast */
+    #toast {
+      position: fixed;
+      bottom: 1.5rem; left: 50%;
+      transform: translateX(-50%) translateY(80px);
+      background: #2e1a1a;
+      border: 1px solid var(--danger);
+      color: #ffb3b3;
+      padding: .65rem 1.2rem;
+      border-radius: 8px;
+      font-size: .82rem;
+      transition: transform .3s;
+      pointer-events: none;
+      z-index: 999;
+      max-width: 90vw;
+      text-align: center;
+    }
+    #toast.show { transform: translateX(-50%) translateY(0); }
+  </style>
+</head>
+<body>
+
+  <h1>Gemini <span>Voice</span> Agent</h1>
+  <p class="subtitle">Two-step: RNNoise VAD → Gemini STT → Agent + MCP → Gemini TTS</p>
+
+  <div id="status-bar">
+    <span id="status-dot"></span>
+    <span id="status-text">Connecting…</span>
+  </div>
+
+  <div class="conversation" id="conversation"></div>
+
+  <div class="vad-wrap">
+    <canvas id="vad-canvas" width="280" height="56"></canvas>
+    <button id="mic-btn" title="Click to start / stop listening">
+      <!-- Mic icon -->
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="9" y="2" width="6" height="13" rx="3"/>
+        <path d="M5 10a7 7 0 0 0 14 0"/>
+        <line x1="12" y1="19" x2="12" y2="22"/>
+        <line x1="8"  y1="22" x2="16" y2="22"/>
+      </svg>
+    </button>
+    <span id="btn-label">Click to speak</span>
+  </div>
+
+  <footer>
+    Powered by <a href="https://ai.google.dev/" target="_blank">Google Gemini</a>
+  </footer>
+
+  <div id="toast"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     JavaScript – all in one ES module
+════════════════════════════════════════════════════════════════════════ -->
+<script type="module">
+'use strict';
+
+// ───────────────────────────────────────────────────────────────────────────
+// DOM helpers
+// ───────────────────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const micBtn      = $('mic-btn');
+const btnLabel    = $('btn-label');
+const statusDot   = $('status-dot');
+const statusText  = $('status-text');
+const conversation= $('conversation');
+const vadCanvas   = $('vad-canvas');
+const toast       = $('toast');
+const vadCtx      = vadCanvas.getContext('2d');
+
+let toastTimer = null;
+function showToast(msg, durationMs = 4000) {
+  toast.textContent = msg;
+  toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), durationMs);
+}
+
+function setStatus(dotClass, text) {
+  statusDot.className = dotClass;
+  statusText.textContent = text;
+}
+
+function addBubble(role, text) {
+  const div = document.createElement('div');
+  div.className = `bubble ${role}`;
+  div.innerHTML = `<div class="label">${role === 'user' ? 'You' : 'Assistant'}</div>
+                   <div class="body">${escHtml(text)}</div>`;
+  conversation.appendChild(div);
+  conversation.scrollTop = conversation.scrollHeight;
+  return div;
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// RNNoise VAD (with energy-based fallback)
+// ───────────────────────────────────────────────────────────────────────────
+class RNNoiseVAD {
+  constructor() {
+    this.loaded   = false;
+    this._state   = null;
+    this.frameSize = 480;        // RNNoise: 480 samples @ 48 kHz = 10 ms
+  }
+
+  async init() {
+    // Candidate CDN URLs for rnnoise-wasm ESM build
+    const candidates = [
+      'https://cdn.jsdelivr.net/npm/rnnoise-wasm@0.0.7/dist/rnnoise-wasm.esm.js',
+      'https://unpkg.com/rnnoise-wasm@0.0.7/dist/rnnoise-wasm.esm.js',
+    ];
+
+    for (const url of candidates) {
+      try {
+        const mod = await import(url);
+        const factory = (mod.default && typeof mod.default === 'function')
+          ? mod.default
+          : (mod.createModule || mod.default);
+        if (!factory) continue;
+
+        const instance = await factory();
+
+        // Detect which API style the package exposes
+        if (typeof instance.newState === 'function') {
+          this._state = instance.newState();
+          this._proc  = frame => this._state.processFrame(frame);
+          this._free  = ()    => { try { this._state.destroy(); } catch {} };
+        } else if (typeof instance.RNNoise === 'function') {
+          this._state = new instance.RNNoise();
+          this._proc  = frame => this._state.processFrame(frame);
+          this._free  = ()    => { try { this._state.free(); } catch {} };
+        } else {
+          continue;
+        }
+
+        this.loaded = true;
+        console.info('[VAD] RNNoise loaded from', url);
+        return;
+      } catch (e) {
+        console.warn('[VAD] Could not load from', url, '-', e.message);
+      }
+    }
+
+    console.warn('[VAD] RNNoise unavailable – using energy-based fallback');
+  }
+
+  /** Returns VAD probability 0–1. Input: Float32Array of 480 samples in [-1,1]. */
+  processFrame(samples480) {
+    if (this.loaded && this._proc) {
+      // RNNoise expects values in ~ [-32768, 32767] range
+      const scaled = new Float32Array(480);
+      for (let i = 0; i < 480; i++) scaled[i] = (samples480[i] || 0) * 32768;
+      try {
+        const r = this._proc(scaled);
+        return typeof r === 'number' ? r : (r?.vad_prob ?? 0.5);
+      } catch { /* fall through */ }
+    }
+    return this._energyVAD(samples480);
+  }
+
+  _energyVAD(samples) {
+    let s = 0;
+    for (let i = 0; i < samples.length; i++) s += samples[i] ** 2;
+    return Math.min(1, Math.sqrt(s / samples.length) * 25);
+  }
+
+  destroy() {
+    if (this._free) { this._free(); this._free = null; }
+  }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// WAV encoder (16-bit PCM, mono)
+// ───────────────────────────────────────────────────────────────────────────
+function encodeWAV(float32Samples, sampleRate) {
+  const n   = float32Samples.length;
+  const buf = new ArrayBuffer(44 + n * 2);
+  const v   = new DataView(buf);
+  const w   = (off, s) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); };
+  w(0, 'RIFF');
+  v.setUint32(4,  36 + n * 2,       true);
+  w(8, 'WAVE');
+  w(12, 'fmt ');
+  v.setUint32(16, 16,               true);
+  v.setUint16(20, 1,                true);  // PCM
+  v.setUint16(22, 1,                true);  // mono
+  v.setUint32(24, sampleRate,       true);
+  v.setUint32(28, sampleRate * 2,   true);
+  v.setUint16(32, 2,                true);
+  v.setUint16(34, 16,               true);
+  w(36, 'data');
+  v.setUint32(40, n * 2,            true);
+  let off = 44;
+  for (let i = 0; i < n; i++) {
+    const s = Math.max(-1, Math.min(1, float32Samples[i]));
+    v.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    off += 2;
+  }
+  return new Uint8Array(buf);
+}
+
+/** 3:1 decimation: 48 kHz → 16 kHz */
+function downsample48to16(buf) {
+  const out = new Float32Array(Math.floor(buf.length / 3));
+  for (let i = 0; i < out.length; i++) {
+    out[i] = (buf[i * 3] + (buf[i * 3 + 1] || 0) + (buf[i * 3 + 2] || 0)) / 3;
+  }
+  return out;
+}
+
+/** Base64-encode a Uint8Array */
+function toBase64(u8) {
+  let s = '';
+  for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]);
+  return btoa(s);
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Streaming PCM audio player (queues chunks with zero-gap scheduling)
+// ───────────────────────────────────────────────────────────────────────────
+class PCMPlayer {
+  constructor() {
+    this._ctx       = null;
+    this._nextTime  = 0;
+    this._sampleRate = 24000;  // Gemini TTS default
+  }
+
+  _ensureCtx(sampleRate) {
+    if (!this._ctx || this._ctx.state === 'closed') {
+      this._ctx = new AudioContext({ sampleRate });
+      this._nextTime = 0;
+    }
+    if (this._ctx.state === 'suspended') this._ctx.resume();
+    this._sampleRate = sampleRate;
+  }
+
+  enqueue(pcmBytes, mimeType) {
+    const sr = parseSampleRate(mimeType, 24000);
+    this._ensureCtx(sr);
+
+    let float32;
+    if (mimeType && mimeType.includes('wav')) {
+      float32 = decodeWAV(pcmBytes);
+    } else {
+      // Raw L16 PCM
+      const i16 = new Int16Array(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength / 2);
+      float32 = new Float32Array(i16.length);
+      for (let i = 0; i < i16.length; i++) float32[i] = i16[i] / 32768;
+    }
+    if (!float32 || float32.length === 0) return;
+
+    const buf = this._ctx.createBuffer(1, float32.length, sr);
+    buf.getChannelData(0).set(float32);
+
+    const src = this._ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(this._ctx.destination);
+
+    const startAt = Math.max(this._ctx.currentTime + 0.04 /* 40 ms lookahead prevents audible gaps */, this._nextTime);
+    src.start(startAt);
+    this._nextTime = startAt + buf.duration;
+  }
+
+  stop() {
+    this._nextTime = 0;
+    if (this._ctx && this._ctx.state !== 'closed') {
+      this._ctx.close().catch(() => {});
+      this._ctx = null;
+    }
+  }
+}
+
+function parseSampleRate(mimeType, fallback) {
+  if (!mimeType) return fallback;
+  const m = mimeType.match(/rate[=:](\d+)/i);
+  return m ? parseInt(m[1], 10) : fallback;
+}
+
+function decodeWAV(bytes) {
+  // Minimal WAV parser (PCM only)
+  try {
+    const v  = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const sr = v.getUint32(24, true);
+    const bps= v.getUint16(34, true);
+    let   off = 12;
+    while (off + 8 < bytes.byteLength) {
+      const id  = String.fromCharCode(...bytes.slice(off, off + 4));
+      const len = v.getUint32(off + 4, true);
+      off += 8;
+      if (id === 'data') {
+        if (bps === 16) {
+          const i16 = new Int16Array(bytes.buffer, bytes.byteOffset + off, len / 2);
+          const f32 = new Float32Array(i16.length);
+          for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768;
+          return f32;
+        }
+        break;
+      }
+      off += len + (len & 1);
+    }
+  } catch {}
+  return null;
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// VAD canvas visualizer
+// ───────────────────────────────────────────────────────────────────────────
+const VAD_HISTORY = 56;
+const vadProbs    = new Float32Array(VAD_HISTORY);
+let   vadHead     = 0;
+
+function pushVADProb(p) {
+  vadProbs[vadHead % VAD_HISTORY] = p;
+  vadHead++;
+  drawVAD();
+}
+
+function drawVAD() {
+  const W = vadCanvas.width, H = vadCanvas.height;
+  vadCtx.clearRect(0, 0, W, H);
+  const barW = W / VAD_HISTORY;
+  for (let i = 0; i < VAD_HISTORY; i++) {
+    const idx = (vadHead - VAD_HISTORY + i + VAD_HISTORY) % VAD_HISTORY;
+    const p   = vadProbs[idx];
+    const h   = Math.max(2, p * H);
+    const r   = Math.round(p * 79  + 50);
+    const g   = Math.round(p * 100 + 100);
+    const b   = Math.round((1 - p) * 150 + 100);
+    vadCtx.fillStyle = `rgba(${r},${g},${b},${0.4 + p * 0.6})`;
+    vadCtx.fillRect(i * barW, H - h, barW - 1, h);
+  }
+}
+drawVAD();
+
+// ───────────────────────────────────────────────────────────────────────────
+// Main app
+// ───────────────────────────────────────────────────────────────────────────
+const vad    = new RNNoiseVAD();
+const player = new PCMPlayer();
+let   ws     = null;
+let   micOn  = false;
+
+// Audio capture state
+let audioCtx48      = null;
+let mediaStream     = null;
+let scriptNode      = null;
+let speechBuffer    = [];     // Float32Array chunks during speech
+let speechActive    = false;
+let silenceFrames   = 0;
+let voiceFrames     = 0;
+let isPlayingTTS    = false;
+
+// VAD tuning – balance between responsiveness and false triggers.
+// Raise VOICE_FRAMES_REQUIRED / lower VAD_THRESHOLD for noisier environments.
+const VAD_THRESHOLD         = 0.35;   // probability to consider speech
+const VOICE_FRAMES_REQUIRED = 3;      // consecutive positive frames to start
+const SILENCE_FRAMES_END    = 30;     // consecutive negative frames to end  (~300 ms)
+const MIN_SPEECH_SAMPLES    = 6400;   // ~400 ms at 16 kHz – ignore shorter clips
+
+// ── WebSocket ──────────────────────────────────────────────────────────────
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const url   = `${proto}://${location.host}/ws`;
+  ws = new WebSocket(url);
+
+  ws.onopen = () => {
+    setStatus('active', 'Connected');
+    micBtn.disabled = false;
+  };
+
+  ws.onclose = () => {
+    setStatus('error', 'Disconnected – reconnecting…');
+    micBtn.disabled = true;
+    setTimeout(connectWS, 3000);
+  };
+
+  ws.onerror = () => setStatus('error', 'Connection error');
+
+  ws.onmessage = evt => {
+    try {
+      const msg = JSON.parse(evt.data);
+      handleServerMsg(msg);
+    } catch {}
+  };
+}
+
+function handleServerMsg(msg) {
+  switch (msg.type) {
+    case 'status':
+      if (msg.message.startsWith('Ready'))    setStatus('active', msg.message);
+      else if (msg.message === 'Listening…')  setStatus('listen', msg.message);
+      else if (msg.message === 'Speaking…')   setStatus('busy',   msg.message);
+      else                                    setStatus('busy',   msg.message);
+      statusText.textContent = msg.message;
+      break;
+
+    case 'transcript':
+      addBubble('user', msg.text);
+      break;
+
+    case 'response_text':
+      addBubble('agent', msg.text);
+      break;
+
+    case 'audio_chunk': {
+      isPlayingTTS = true;
+      const raw = atob(msg.data);
+      const u8  = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) u8[i] = raw.charCodeAt(i);
+      player.enqueue(u8, msg.mime_type);
+      break;
+    }
+
+    case 'audio_end':
+      isPlayingTTS = false;
+      if (micOn) setStatus('listen', 'Listening…');
+      break;
+
+    case 'error':
+      setStatus('error', 'Error');
+      showToast('Error: ' + msg.message);
+      isPlayingTTS = false;
+      break;
+
+    case 'pong':
+      break;
+  }
+}
+
+function sendJSON(obj) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+}
+
+// ── Mic on / off ───────────────────────────────────────────────────────────
+micBtn.addEventListener('click', () => micOn ? stopMic() : startMic());
+
+async function startMic() {
+  try {
+    // Init RNNoise (non-blocking – OK to fail)
+    await vad.init();
+
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: false }
+    });
+
+    // Use 48 kHz context for RNNoise
+    audioCtx48 = new AudioContext({ sampleRate: 48000 });
+    await audioCtx48.resume();
+
+    const source = audioCtx48.createMediaStreamSource(mediaStream);
+
+    // ScriptProcessorNode is deprecated but universally supported.
+    // AudioWorklet would be preferable for future-proofing, but requires
+    // serving the worklet script from the same origin and WASM transfer,
+    // adding complexity not warranted for this use-case.
+    scriptNode = audioCtx48.createScriptProcessor(4096, 1, 1);
+    scriptNode.onaudioprocess = onAudioProcess;
+
+    source.connect(scriptNode);
+    scriptNode.connect(audioCtx48.destination);
+
+    micOn = true;
+    micBtn.classList.add('active');
+    btnLabel.textContent = 'Listening – click to stop';
+    setStatus('listen', 'Listening…');
+    speechBuffer = [];
+    speechActive = false;
+    silenceFrames = 0;
+    voiceFrames   = 0;
+  } catch (err) {
+    showToast('Microphone error: ' + err.message);
+  }
+}
+
+function stopMic() {
+  micOn = false;
+  speechActive = false;
+  speechBuffer = [];
+
+  if (scriptNode)  { scriptNode.disconnect(); scriptNode = null; }
+  if (audioCtx48)  { audioCtx48.close().catch(() => {}); audioCtx48 = null; }
+  if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+
+  micBtn.classList.remove('active', 'speaking');
+  btnLabel.textContent = 'Click to speak';
+  setStatus('active', 'Ready');
+}
+
+// ── Audio processing loop ──────────────────────────────────────────────────
+function onAudioProcess(evt) {
+  if (!micOn) return;
+
+  const inputData = evt.inputBuffer.getChannelData(0);   // Float32, 48 kHz
+
+  // Process in 480-sample RNNoise frames
+  let offset = 0;
+  while (offset + 480 <= inputData.length) {
+    const frame = inputData.subarray(offset, offset + 480);
+    const prob  = vad.processFrame(frame);
+    pushVADProb(prob);
+
+    if (prob >= VAD_THRESHOLD) {
+      voiceFrames++;
+      silenceFrames = 0;
+
+      if (!speechActive && voiceFrames >= VOICE_FRAMES_REQUIRED) {
+        speechActive = true;
+        speechBuffer = [];
+        micBtn.classList.add('speaking');
+        // Barge-in: interrupt any playing TTS
+        if (isPlayingTTS) {
+          player.stop();
+          sendJSON({ type: 'barge_in' });
+          isPlayingTTS = false;
+        }
+      }
+
+      if (speechActive) {
+        speechBuffer.push(new Float32Array(frame));
+      }
+    } else {
+      silenceFrames++;
+      voiceFrames = 0;
+
+      if (speechActive) {
+        speechBuffer.push(new Float32Array(frame));  // include trailing silence
+        if (silenceFrames >= SILENCE_FRAMES_END) {
+          onSpeechEnd();
+          speechActive = false;
+          silenceFrames = 0;
+        }
+      }
+    }
+
+    offset += 480;
+  }
+}
+
+function onSpeechEnd() {
+  micBtn.classList.remove('speaking');
+  setStatus('busy', 'Processing…');
+
+  // Flatten buffered Float32 chunks
+  const totalLen = speechBuffer.reduce((a, c) => a + c.length, 0);
+  const combined = new Float32Array(totalLen);
+  let pos = 0;
+  for (const chunk of speechBuffer) { combined.set(chunk, pos); pos += chunk.length; }
+  speechBuffer = [];
+
+  // Downsample 48 kHz → 16 kHz for Gemini
+  const pcm16k = downsample48to16(combined);
+
+  if (pcm16k.length < MIN_SPEECH_SAMPLES) {
+    // Too short – ignore (noise burst)
+    setStatus('listen', 'Listening…');
+    return;
+  }
+
+  const wavBytes = encodeWAV(pcm16k, 16000);
+  const b64      = toBase64(wavBytes);
+  sendJSON({ type: 'audio', data: b64 });
+}
+
+// ── Kick off ───────────────────────────────────────────────────────────────
+micBtn.disabled = true;
+setStatus('', 'Connecting…');
+connectWS();
+
+// Keepalive ping
+setInterval(() => { if (ws && ws.readyState === WebSocket.OPEN) sendJSON({ type: 'ping' }); }, 20000);
+</script>
+
+</body>
+</html>
